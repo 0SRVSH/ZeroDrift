@@ -6,29 +6,44 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$psql = Get-Command psql -ErrorAction Stop
+$psql = Get-Command psql -ErrorAction SilentlyContinue
+$docker = $null
+if (-not $psql) {
+    $docker = Get-Command docker -ErrorAction Stop
+}
 $sqlFile = Join-Path $PSScriptRoot 'prepare-load-test.sql'
 $accountPoolFile = Join-Path ([System.IO.Path]::GetTempPath()) 'zerodrift-load-test-accounts.json'
 $previousPassword = $env:PGPASSWORD
 
-if ($env:DB_PASSWORD) {
-    $env:PGPASSWORD = $env:DB_PASSWORD
-} elseif (-not $env:PGPASSWORD) {
-    $env:PGPASSWORD = 'postgres'
-}
-
 try {
-    $output = & $psql.Source `
-        --no-psqlrc `
-        --quiet `
-        --no-align `
-        --tuples-only `
-        --set 'ON_ERROR_STOP=1' `
-        --host $DatabaseHost `
-        --port $DatabasePort `
-        --username $DatabaseUser `
-        --dbname $DatabaseName `
-        --file $sqlFile
+    if ($psql) {
+        if ($env:DB_PASSWORD) {
+            $env:PGPASSWORD = $env:DB_PASSWORD
+        } elseif (-not $env:PGPASSWORD) {
+            $env:PGPASSWORD = 'postgres'
+        }
+
+        $output = & $psql.Source `
+            --no-psqlrc `
+            --quiet `
+            --no-align `
+            --tuples-only `
+            --set 'ON_ERROR_STOP=1' `
+            --host $DatabaseHost `
+            --port $DatabasePort `
+            --username $DatabaseUser `
+            --dbname $DatabaseName `
+            --file $sqlFile
+    } else {
+        $output = Get-Content -Raw -LiteralPath $sqlFile | & $docker.Source compose exec -T postgres psql `
+            --no-psqlrc `
+            --quiet `
+            --no-align `
+            --tuples-only `
+            --set 'ON_ERROR_STOP=1' `
+            --username $DatabaseUser `
+            --dbname $DatabaseName
+    }
 
     if ($LASTEXITCODE -ne 0) {
         throw "Load-test account preparation failed (psql exit code $LASTEXITCODE)."
@@ -41,7 +56,6 @@ try {
     }
 
     [System.IO.File]::WriteAllText($accountPoolFile, $json, [System.Text.Encoding]::ASCII)
-    Write-Output $accountPoolFile
 } finally {
     if ($null -eq $previousPassword) {
         Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
@@ -49,3 +63,5 @@ try {
         $env:PGPASSWORD = $previousPassword
     }
 }
+
+Write-Output $accountPoolFile
