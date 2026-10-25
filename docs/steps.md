@@ -1,6 +1,6 @@
 # steps.md
 
-This document provides a step-by-step setup and execution guide for configuring Flyway database migrations in a Java 21 / Spring Boot 3 financial ledger application, ensuring immutable double-entry records, idempotency tracking, and storage-level debit-credit parity enforcement[cite: 1].
+This document provides a step-by-step setup and execution guide for configuring Flyway database migrations in a Java 25 / Spring Boot 3 financial ledger application, ensuring immutable double-entry records, idempotency tracking, and storage-level debit-credit parity enforcement[cite: 1].
 
 ---
 

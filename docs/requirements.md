@@ -68,10 +68,10 @@ Any AI code assistant (e.g., Cursor, Claude Code, GitHub Copilot) reading this r
 * **Failure Mode:** As the `postings` table grows into millions of rows, write latency degrades linearly ($O(N)$), causing lock hold times to skyrocket and thread pools to exhaust.
 * **Mandatory Rule:** Acquire the row lock on `account_snapshots`[cite: 1]. Derive real-time balance using the materialized snapshot balance combined only with postings created *after* the snapshot's recorded sequence checkpoint.
 
-### ⚠️ Warning 5: Java 21 Virtual Thread Pinning
-* **Violation:** Using traditional `synchronized` blocks or synchronized methods inside the transfer pipeline when running on Java 21 Virtual Threads.
-* **Failure Mode:** Synchronized blocks pin virtual threads to their underlying OS carrier threads, neutralizing the concurrency benefits of Project Loom and degrading throughput.
-* **Mandatory Rule:** Use `java.util.concurrent.locks.ReentrantLock` instead of `synchronized` blocks whenever explicit in-memory locking is required.
+### ⚠️ Warning 5: Virtual Thread Pinning
+* **Violation:** Performing long-running or blocking native/foreign-function operations on virtual threads in the transfer pipeline.
+* **Failure Mode:** Native and foreign-function calls can pin virtual threads to their underlying OS carrier threads, reducing the concurrency benefits of Project Loom and degrading throughput. Starting with Java 24, blocking while holding a `synchronized` monitor no longer causes this form of pinning.
+* **Mandatory Rule:** Keep native/foreign-function calls brief on virtual threads. Use `java.util.concurrent.locks.ReentrantLock` when explicit in-memory lock control is required; do not rely on it solely to avoid monitor pinning on Java 25.
 
 ---
 

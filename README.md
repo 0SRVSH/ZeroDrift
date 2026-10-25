@@ -1,6 +1,6 @@
 # ZeroDrift: High-Performance Double-Entry Financial Ledger
 
-A mission-critical, event-sourced financial ledger built with **Java 21 (Virtual Threads), Spring Boot 3, PostgreSQL 16, and Redis 7**. 
+A mission-critical, event-sourced financial ledger built with **Java 25 (Virtual Threads), Spring Boot 3, PostgreSQL 16, and Redis 7**.
 
 Standard databases often drop balances or suffer severe race conditions when concurrent requests debit and credit identical accounts simultaneously[cite: 1]. This project provides a robust, zero-drift alternative: an immutable double-entry bookkeeping system where accounts maintain no direct mutable balance; balances are derived strictly from an immutable stream of balanced debits and credits[cite: 1].
 
@@ -72,7 +72,7 @@ financial-ledger/
 ## 5. Getting Started
 
 ### Prerequisites
-* Java 21 SDK (with Virtual Thread support enabled)
+* Java 25 SDK (with Virtual Thread support enabled)
 * Maven 3.9+
 * Docker & Docker Compose
 

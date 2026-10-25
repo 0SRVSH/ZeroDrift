@@ -10,7 +10,7 @@ This implementation plan is structured for phased execution by an engineering te
 
 * **Objective:** Establish the foundational infrastructure, build configuration, and database schema with engine-level parity validation[cite: 1].
 * **Tasks:**
-  1. Initialize a Spring Boot 3.x project using Java 21 with dependencies: `spring-boot-starter-data-jpa`, `spring-boot-starter-web`, `flyway-core`, `flyway-database-postgresql`, `postgresql`, `redisson-spring-boot-starter`, and `lombok`.
+  1. Initialize a Spring Boot 3.x project using Java 25 with dependencies: `spring-boot-starter-data-jpa`, `spring-boot-starter-web`, `flyway-core`, `flyway-database-postgresql`, `postgresql`, `redisson-spring-boot-starter`, and `lombok`.
   2. Configure `docker-compose.yml` defining:
      * **PostgreSQL 16** with a dedicated healthcheck and persistent volume.
      * **Redis 7 (Alpine)** for caching and distributed locks.
