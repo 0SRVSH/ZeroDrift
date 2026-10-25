@@ -29,32 +29,24 @@ While many web backends rely on naïve `UPDATE accounts SET balance = balance - 
 ## 3. Repository Structure
 
 ```text
-financial-ledger/
-├── .github/
-│   └── workflows/
-│       └── ci.yml                      # CI pipeline (build, test, lint)
-├── docker-compose.yml                  # PostgreSQL 16 & Redis 7 services
-├── k6/                                 # Load and stress benchmark scripts
-│   ├── load-test-uniform.js            # 5,000 TPS uniform load test
-│   └── stress-test-hotspot.js          # Hot-spot merchant account stress test
+ZeroDrift/
+├── docker-compose.yml                  # PostgreSQL 16 and Redis 7
+├── docs/                               # Requirements, plan, and implementation steps
+├── k6/                                 # k6 load and stress benchmark scripts
+├── scripts/                            # Load-test account setup and reconciliation
 ├── src/
 │   ├── main/
 │   │   ├── java/com/ledger/
 │   │   │   ├── LedgerApplication.java
-│   │   │   ├── api/                    # REST Controllers, DTOs, Idempotency Filter
-│   │   │   ├── config/                 # Redis/Redisson, Virtual Threads, Flyway Config
-│   │   │   ├── domain/                 # Entities (JournalEntry, Posting, Account)
-│   │   │   ├── exception/              # InsufficientFundsException, ConcurrencyException
-│   │   │   ├── repository/             # Spring Data JPA & JdbcClient Repositories
-│   │   │   └── service/                # TransferEngine, LockOrchestrator, SnapshotService
+│   │   │   ├── controller/             # Ledger REST endpoints
+│   │   │   ├── config/                 # Application configuration and sample data
+│   │   │   ├── domain/                 # Accounts, journal entries, and postings
+│   │   │   ├── repository/             # Spring Data repositories
+│   │   │   └── service/                # Validation, posting, and snapshot services
 │   │   └── resources/
 │   │       ├── application.yml         # Runtime configuration
-│   │       └── db/migration/           # Flyway SQL migration scripts (V1, V2, V3)
-│   └── test/
-│       └── java/com/ledger/            # Testcontainers integration & concurrency tests
-├── steps.md                            # Step-by-step database setup & Flyway guide
-├── requirements.md                     # Engineering invariants & AI guardrails
-├── plan.md                             # Phased implementation roadmap
+│   │       └── db/migration/           # Flyway SQL migrations
+│   └── test/java/com/ledger/            # Integration and concurrency tests
 └── pom.xml                             # Maven build configuration
 ```
 
@@ -69,66 +61,104 @@ financial-ledger/
 
 ---
 
-## 5. Getting Started
+## 5. Local Development
 
 ### Prerequisites
 * Java 25 SDK (with Virtual Thread support enabled)
 * Maven 3.9+
 * Docker & Docker Compose
 
-### 1. Start Infrastructure Dependencies
-Spin up local PostgreSQL and Redis containers:
-```bash
+### 1. Start PostgreSQL and Redis
+```powershell
 docker compose up -d
 ```
 
-### 2. Run Database Migrations
-Execute Flyway migrations to establish tables, indexes, and parity triggers:
-```bash
-./mvnw flyway:migrate
+Flyway applies the schema migrations automatically when the application starts.
+Database defaults are `ledger_db` / `postgres` / `postgres`; override them with
+`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, and `DB_PORT` when needed.
+
+### 2. Compile, test, and run
+From PowerShell:
+```powershell
+.\mvnw.cmd clean compile
+.\mvnw.cmd test
+.\mvnw.cmd spring-boot:run
 ```
 
-### 3. Build & Run Application
-```bash
-./mvnw clean spring-boot:run
-```
-The server will start on port `8080`. If the database contains no accounts, startup creates an active USD
-operating asset and revenue account with zero balances; their account IDs are logged at startup.
+The integration tests require PostgreSQL and Redis to be running; Docker Compose
+provides both. The server starts on port `8080`. If the database contains no
+accounts, startup creates an active USD operating asset and revenue account with
+zero balances and logs their account IDs.
 
-### 4. Ledger API
+### 3. Ledger API
 
 * `POST /api/v1/ledger/transactions` posts a balanced transaction.
 * `GET /api/v1/ledger/accounts/{accountId}/balance` returns the account snapshot.
 * `GET /api/v1/ledger/transactions/{id}` returns a journal entry and its ordered postings.
 
-For a transaction request, pass the sample account IDs from startup logs in the posting legs and provide a
-unique `idempotencyKey`, a `narration`, and at least two postings with equal debit and credit totals.
+Each transaction request requires a unique `idempotencyKey`, a `narration`, and
+at least two postings with equal debit and credit totals. A posting contains an
+`accountId`, a `direction` (`DEBIT` or `CREDIT`), and a positive amount with up to
+four decimal places.
 
-### 5. Execute Multi-Threaded Concurrency Tests
-Run the automated test suite powered by Testcontainers to verify deadlock-free concurrent transfers:
-```bash
-./mvnw test
+## 6. Architecture and Invariants
+
+* **Zero drift:** Every journal entry must balance. A deferred PostgreSQL constraint
+  trigger rejects unbalanced postings at commit; amounts use fixed-scale
+  `NUMERIC(18, 4)`.
+* **Deterministic pessimistic locking:** A transaction sorts its account IDs before
+  locking snapshot rows with `SELECT ... FOR UPDATE`, preventing lock-order deadlocks.
+  Redis locks serialize requests that share an idempotency key.
+* **Balance sharding:** An account can use multiple snapshot buckets. Positive
+  balance adjustments select a bucket, distributing credits for high-volume
+  merchant accounts; balance reads aggregate the account's buckets.
+* **Snapshot reconciliation:** Snapshot balances are checked against all postings
+  using the normal-balance convention for each account type.
+
+## 7. Performance Benchmarking (k6)
+
+Install k6 using the official
+[k6 installation instructions](https://grafana.com/docs/k6/latest/set-up/install-k6/).
+The scripts require `k6` and PostgreSQL's `psql` client on `PATH`. Start Docker
+Compose and the Spring Boot application before benchmarking. The setup script
+creates 10,000 load-test asset accounts with balanced opening postings and a
+liability merchant with 20 buckets. Those records are retained and reused by
+subsequent runs.
+
+Run the 30-second, 5,000-request-per-second uniform workload and reconcile after it:
+```powershell
+.\scripts\run-load-test.ps1 -Scenario uniform
 ```
 
----
-
-## 6. Performance Benchmarking (k6)
-
-The project includes pre-configured k6 benchmarking suites designed to validate transaction latency and parity under heavy load:
-
-```bash
-# Execute 5,000 TPS uniform distribution test
-k6 run k6/load-test-uniform.js
+Run the hotspot test with 5,000 virtual users crediting the same merchant:
+```powershell
+.\scripts\run-load-test.ps1 -Scenario hotspot -Duration 30s -VirtualUsers 5000
 ```
 
-### Validated Target Metrics:
-* **Throughput:** Sustained 5,000 TPS.
-* **Debit-Credit Parity Invariant:** 100% parity verified via post-run automated audit script.
-* **Zero Race Conditions:** Completely eliminated negative balances and duplicate transfers across concurrent runs.
+The uniform test enforces an HTTP request failure rate below `0.01%`, p95 latency
+below `50ms`, and p99 latency below `100ms`. The run script prepares or reuses its
+account pool, runs k6 against `http://localhost:8080`, then runs reconciliation
+even if the benchmark reports a failure. Adjust the run with `-Rate`, `-Duration`,
+`-VirtualUsers`, and `-BaseUrl`. Set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
+and `DB_PASSWORD` in the PowerShell environment to target a non-default database.
 
----
+To run the load and audit separately:
+```powershell
+.\scripts\prepare-load-test.ps1
+$env:ACCOUNT_POOL_FILE = Join-Path $env:TEMP 'zerodrift-load-test-accounts.json'
+$env:BASE_URL = 'http://localhost:8080'
+k6 run .\k6\load-test-uniform.js
+.\scripts\reconciliation-audit.ps1
+```
 
-## 7. Key References
+The audit executes [reconciliation-audit.sql](./scripts/reconciliation-audit.sql)
+and exits with an error if total debit-credit drift is non-zero, any account's
+aggregate cleared snapshot differs from derived postings, or any account has an
+unexpected number of snapshot buckets. Since the load accounts' opening balances
+are represented by balanced journal entries, they are included in both sides of
+the audit.
+
+## 8. Key References
 
 * **Martin Fowler:** *Accounting Patterns & Event Sourcing*
 * **TigerBeetle Design Philosophy:** *Safety and Financial Invariants in High-Throughput Storage Engines*
