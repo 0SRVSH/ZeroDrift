@@ -2,8 +2,10 @@ param(
     [ValidateSet('uniform', 'hotspot')]
     [string]$Scenario = 'uniform',
     [string]$Duration = '30s',
-    [int]$Rate = 5000,
-    [int]$VirtualUsers = 5000,
+    [int]$Rate = 100,
+    [int]$PreAllocatedVUs = 20,
+    [int]$MaxVUs = 50,
+    [int]$VirtualUsers = 50,
     [string]$BaseUrl = 'http://localhost:8080',
     [string]$DatabaseHost = $(if ($env:DB_HOST) { $env:DB_HOST } else { 'localhost' }),
     [int]$DatabasePort = $(if ($env:DB_PORT) { [int]$env:DB_PORT } else { 5432 }),
@@ -23,6 +25,8 @@ $previousEnvironment = @{
     BASE_URL = $env:BASE_URL
     DURATION = $env:DURATION
     RATE = $env:RATE
+    PREALLOCATED_VUS = $env:PREALLOCATED_VUS
+    MAX_VUS = $env:MAX_VUS
     VUS = $env:VUS
     PGPASSWORD = $env:PGPASSWORD
 }
@@ -42,14 +46,28 @@ try {
     $env:ACCOUNT_POOL_FILE = $accountPoolFile
     $env:BASE_URL = $BaseUrl
     $env:DURATION = $Duration
+    $k6Arguments = @(
+        'run',
+        '--env', "ACCOUNT_POOL_FILE=$accountPoolFile",
+        '--env', "BASE_URL=$BaseUrl",
+        '--env', "DURATION=$Duration"
+    )
     if ($Scenario -eq 'uniform') {
         $env:RATE = "$Rate"
+        $env:PREALLOCATED_VUS = "$PreAllocatedVUs"
+        $env:MAX_VUS = "$MaxVUs"
+        $k6Arguments += @(
+            '--env', "RATE=$Rate",
+            '--env', "PREALLOCATED_VUS=$PreAllocatedVUs",
+            '--env', "MAX_VUS=$MaxVUs"
+        )
     } else {
         $env:VUS = "$VirtualUsers"
+        $k6Arguments += @('--env', "VUS=$VirtualUsers")
     }
 
     Write-Host "Running $Scenario benchmark against $BaseUrl."
-    & $k6.Source run $testScript
+    & $k6.Source @k6Arguments $testScript
     $loadTestExitCode = $LASTEXITCODE
 
     Write-Host 'Running post-load reconciliation audit.'

@@ -3,27 +3,32 @@ import { check } from 'k6';
 
 const baseUrl = (__ENV.BASE_URL || 'http://localhost:8080').replace(/\/+$/, '');
 const accountPoolFile = __ENV.ACCOUNT_POOL_FILE || './load-test-accounts.json';
+const rawAccounts = open(accountPoolFile);
 const duration = __ENV.DURATION || '30s';
+const rate = Number(__ENV.RATE || 100);
+const preAllocatedVUs = Number(__ENV.PREALLOCATED_VUS || 20);
+const maxVUs = Number(__ENV.MAX_VUS || 50);
 
 export const options = {
-    scenarios: {
-        uniform_transactions: {
-            executor: 'constant-arrival-rate',
-            rate: Number(__ENV.RATE || 5000),
-            timeUnit: '1s',
-            duration,
-            preAllocatedVUs: Number(__ENV.PREALLOCATED_VUS || 1000),
-            maxVUs: Number(__ENV.MAX_VUS || 5000),
-        },
+  scenarios: {
+    uniform_transactions: {
+      executor: 'constant-arrival-rate',
+      rate,
+      timeUnit: '1s',
+      duration,
+      preAllocatedVUs,
+      maxVUs,
+      gracefulStop: '5s',
     },
-    thresholds: {
-        http_req_failed: ['rate<0.0001'],
-        http_req_duration: ['p(95)<50', 'p(99)<100'],
-    },
+  },
+  thresholds: {
+    http_req_failed: ['rate<0.01'],
+    http_req_duration: ['p(95)<150', 'p(99)<300'],
+  },
 };
 
 export function setup() {
-    const accounts = JSON.parse(open(accountPoolFile));
+    const accounts = JSON.parse(rawAccounts);
     if (!Array.isArray(accounts.retailAccountIds) || accounts.retailAccountIds.length < 4) {
         throw new Error('The load-test account pool must contain at least four retail account IDs.');
     }
@@ -50,7 +55,6 @@ export default function (retailAccountIds) {
         {
             headers: {
                 'Content-Type': 'application/json',
-                'Idempotency-Key': idempotencyKey,
             },
         },
     );

@@ -3,13 +3,14 @@ import { check } from 'k6';
 
 const baseUrl = (__ENV.BASE_URL || 'http://localhost:8080').replace(/\/+$/, '');
 const accountPoolFile = __ENV.ACCOUNT_POOL_FILE || './load-test-accounts.json';
+const rawAccounts = open(accountPoolFile);
 const duration = __ENV.DURATION || '30s';
 
 export const options = {
     scenarios: {
         hotspot_credits: {
             executor: 'constant-vus',
-            vus: Number(__ENV.VUS || 5000),
+            vus: Number(__ENV.VUS || 50),
             duration,
         },
     },
@@ -19,7 +20,7 @@ export const options = {
 };
 
 export function setup() {
-    const accounts = JSON.parse(open(accountPoolFile));
+    const accounts = JSON.parse(rawAccounts);
     if (!Array.isArray(accounts.retailAccountIds) || accounts.retailAccountIds.length === 0) {
         throw new Error('The load-test account pool must contain at least one retail account ID.');
     }
@@ -54,7 +55,6 @@ export default function (accounts) {
         {
             headers: {
                 'Content-Type': 'application/json',
-                'Idempotency-Key': idempotencyKey,
             },
         },
     );

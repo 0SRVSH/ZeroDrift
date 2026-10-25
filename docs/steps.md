@@ -177,6 +177,8 @@ ON journal_entries (posted_at DESC);
 rewriting an applied migration. It adds the snapshot UUID and pending balance,
 makes the UUID the snapshot primary key while retaining a unique account ID,
 and changes journal-entry statuses to `COMMITTED` and `REJECTED`.
+The parity constraint trigger checks rows after `INSERT` or `UPDATE`; it does
+not prevent `UPDATE` or `DELETE` operations on journal entries or postings.
 
 ### Step 4b: Add snapshot buckets and posting checkpoints
 
@@ -216,7 +218,9 @@ ORDER BY installed_rank;
 ```
 
 #### 3. Verification Test A: Valid Balanced Transfer
-Execute inside `psql` to verify valid inserts:
+Execute inside `psql` to verify valid inserts. When a local `psql` binary is
+unavailable, connect to the Compose database with
+`docker compose exec -it postgres psql -U postgres -d ledger_db`:
 ```sql
 BEGIN;
 
@@ -228,7 +232,7 @@ INSERT INTO accounts (id, account_number, currency, account_type) VALUES
     ('b0000000-0000-0000-0000-000000000002', 'ACC_CREDIT', 'USD', 'LIABILITY');
 
 INSERT INTO journal_entries (id, idempotency_key, narration, status)
-VALUES ('c0000000-0000-0000-0000-000000000003', 'test-key-01', 'Balanced Leg Test', 'POSTED');
+VALUES ('c0000000-0000-0000-0000-000000000003', 'test-key-01', 'Balanced Leg Test', 'COMMITTED');
 
 -- Balanced Postings ($150.00 DEBIT and $150.00 CREDIT)
 INSERT INTO postings (journal_entry_id, account_id, direction, amount, sequence_order) VALUES
@@ -248,7 +252,7 @@ INSERT INTO idempotency_records (idempotency_key, status, request_hash, expires_
 VALUES ('test-key-02', 'PENDING', 'hash_02', NOW() + INTERVAL '1 hour');
 
 INSERT INTO journal_entries (id, idempotency_key, narration, status)
-VALUES ('d0000000-0000-0000-0000-000000000004', 'test-key-02', 'Unbalanced Leg Test', 'POSTED');
+VALUES ('d0000000-0000-0000-0000-000000000004', 'test-key-02', 'Unbalanced Leg Test', 'COMMITTED');
 
 -- Intentionally Unbalanced ($150.00 DEBIT vs $100.00 CREDIT)
 INSERT INTO postings (journal_entry_id, account_id, direction, amount, sequence_order) VALUES
@@ -258,3 +262,7 @@ INSERT INTO postings (journal_entry_id, account_id, direction, amount, sequence_
 COMMIT;
 -- Expected output: ERROR: Double-entry parity violation: Journal d0000000-0000-0000-0000-000000000004 does not balance. Net discrepancy: 50.0000
 ```
+
+These direct SQL examples verify the parity trigger only; they bypass the ledger
+engine and do not update `account_snapshots`. Do not run them in a database that
+must pass the full reconciliation audit.

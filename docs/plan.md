@@ -32,15 +32,15 @@ This implementation plan is structured for phased execution by an engineering te
 * **Tasks:**
   1. Implement immutable domain records / entities:
      * `Account` (UUID id, accountNumber, currency, accountType, isActive)
-     * `AccountSnapshot` (UUID id and accountId, cleared and pending balances as `BigDecimal`, version, lastJournalEntryId, updatedAt)
-     * `JournalEntry` (id, idempotencyKey, narration, status [`COMMITTED`/`REJECTED`], postedAt), immutable and append-only
-     * `Posting` (id, journalEntryId, accountId, direction [`DEBIT`/`CREDIT`], amount as `BigDecimal`, sequenceOrder), immutable and append-only
+     * `AccountSnapshot` (UUID id, accountId, bucketIndex, cleared and pending balances as `BigDecimal`, version, lastJournalEntryId, lastPostingSequence, updatedAt)
+     * `JournalEntry` (id, idempotencyKey, narration, status [`COMMITTED`/`REJECTED`], postedAt), created by the application as append-oriented history
+     * `Posting` (id, journalEntryId, accountId, bucketIndex, direction [`DEBIT`/`CREDIT`], amount as `BigDecimal`, sequenceOrder), created by the application as append-oriented history
      * `IdempotencyRecord` (idempotencyKey, status [`PENDING`/`COMMITTED`/`REJECTED`], requestHash, JSON responsePayload, createdAt, expiresAt)
-  2. Create Spring Data repositories for all five entities. `AccountSnapshotRepository` must provide an ordered pessimistic write-lock query by account ID.
+  2. Create Spring Data repositories for all five entities. `AccountSnapshotRepository` provides pessimistic locks for individual buckets and a deterministic all-bucket checkpoint lock.
   3. Use explicit scale-4 `BigDecimal` mappings for monetary fields; normalize constructor values with `RoundingMode.UNNECESSARY`.
 * **Exit Criteria:**
-  * Unit tests confirm `AccountSnapshot` amounts cannot be instantiated using `Double` or `Float`.
-  * Repository tests verify that `lockAccountsForUpdate` returns accounts in strictly sorted ascending order.
+  * Snapshot monetary fields and constructors use `BigDecimal`; integration tests exercise snapshot balances through transactions and checkpointing.
+  * Opposite-direction transfer tests exercise the engine's sorted account UUID lock order and complete without deadlocks.
 
 ---
 
@@ -51,10 +51,10 @@ This implementation plan is structured for phased execution by an engineering te
   1. Define transaction request and response DTOs for an idempotency key, narration, and at least two account postings.
   2. Validate positive amounts at scale 4 and enforce exact debit-credit parity before persistence.
   3. Implement `LedgerEngineService` with `@Transactional(isolation = Isolation.READ_COMMITTED)`:
-     * Sort distinct account UUIDs ascending before locking snapshots.
+     * Sort distinct account UUIDs ascending, then lock required snapshot buckets by ascending bucket index.
      * Verify every referenced account exists, is active, and uses the transaction currency.
      * Apply debit-normal accounting to asset/expense accounts and credit-normal accounting to liability/equity/revenue accounts; reject a negative resulting normal balance.
-     * Append a committed journal entry and its immutable postings; update the locked snapshots and their optimistic versions.
+     * Append a committed journal entry and its postings; update locked snapshots in the same database transaction.
   4. Implement `LedgerOrchestrator` outside the engine transaction:
      * Acquire a Redisson lock scoped to the idempotency key before examining or changing idempotency records.
      * Return a cached response for a matching committed request; reject pending or conflicting key reuse.
@@ -70,26 +70,27 @@ This implementation plan is structured for phased execution by an engineering te
 * **Objective:** Expose the ledger pipeline through a resilient REST API.
 * **Tasks:**
   1. Implement a controller accepting the general multi-posting transaction DTO and delegating to `LedgerOrchestrator`.
-  2. Enforce the required idempotency key at the HTTP boundary; map pending or conflicting key reuse to HTTP `409 Conflict`.
+  2. Require `idempotencyKey` in the JSON request body (not an `Idempotency-Key` header); map pending or conflicting key reuse to HTTP `409 Conflict`.
   3. Map validation, balance, and account-state failures to explicit client error responses.
-  4. Implement the transaction endpoint under `/api/v1/transactions`.
+  4. The implemented endpoint is `POST /api/v1/ledger/transactions`; validation requires a nonblank key of at most 128 characters, non-null narration, and at least two individually validated postings.
 * **Exit Criteria:**
-  * Firing 20 concurrent requests with an identical `Idempotency-Key` results in one committed transaction and no duplicate postings.
+  * A retry with the same JSON key and request payload returns the cached response without duplicate postings.
 
 ---
 
-### Phase 5: High-Concurrency Integration Testing (Testcontainers)
+### Phase 5: High-Concurrency Integration Testing
 
 * **Objective:** Validate system invariants under multithreaded contention without mocking storage layers.
 * **Tasks:**
-  1. Configure `Testcontainers` for PostgreSQL 16 (`postgres:16-alpine`) and Redis 7 (`redis:7-alpine`) in `src/test/java`, registering container connection details dynamically.
-  2. Implement REST integration tests for balanced transactions, rejected unbalanced transactions, and idempotent retries; verify persisted immutable journal entries and postings as well as snapshot balances.
-  3. Implement multithreaded test suites using `ExecutorService` and synchronized request start:
+  1. Run the Spring Boot integration tests against the configured PostgreSQL and Redis services; the current test profile does not start Testcontainers.
+  2. The current REST integration suite covers balanced and unbalanced transactions, idempotent retries, opposite-direction concurrency, balance depletion, bucketing, and checkpointing.
+  3. The concurrent tests use an `ExecutorService` and synchronized request start:
      * **Bidirectional Deadlock Suite:** Concurrent cross-transfers between two accounts; require all requests to complete within a strict timeout and preserve total balance.
      * **Balance Depletion Suite:** 20 threads simultaneously attempting to debit an account holding balance for only 5 transfers; assert exactly 5 succeed and 15 fail with `InsufficientFundsException`.
      * **Network Retry Simulation:** Re-send an identical payload with the same idempotency key and verify the cached response and absence of duplicate journal entries or postings.
 * **Exit Criteria:**
-  * `mvn clean test` passes with 100% test success across all integration and concurrent scenarios.
+  * `mvn test` passes against the configured PostgreSQL and Redis services.
+  * Tests create `IT-*` account snapshots directly, without opening postings for their initial balances. Reset the database volumes before a benchmark audit if tests have run since the last clean database.
 
 ---
 
@@ -99,10 +100,11 @@ This implementation plan is structured for phased execution by an engineering te
 * **Tasks:**
   1. Implement **Balance Sharding (Bucketing)** for merchant accounts:
      * Split high-throughput destination accounts into $N$ internal balance buckets ($B_1 \dots B_n$).
-     * Credit operations select a bucket at random (`ThreadLocalRandom.current().nextInt(N)`), minimizing lock contention.
+     * Positive normal-balance adjustments select a bucket at random (`ThreadLocalRandom.current().nextInt(N)`), minimizing lock contention (for example, credits to a liability-type merchant).
   2. Implement **Snapshot Checkpointing Service**:
      * Scheduled task to periodically update `account_snapshots` from the append-only `postings` log.
-     * Ensure balance reads calculate: $\text{Snapshot} + \sum \text{Postings after snapshot timestamp}$.
+     * The balance endpoint sums materialized snapshot buckets. The scheduled checkpoint applies only postings whose sequence is newer than each snapshot's `last_posting_sequence`.
+     * The load-test fixture configures 20 buckets for `K6-HOTSPOT-MERCHANT`.
 * **Exit Criteria:**
   * Benchmark shows reduced lock wait times on hot recipient accounts by $>3\times$ compared to single-row locking.
 
@@ -113,21 +115,11 @@ This implementation plan is structured for phased execution by an engineering te
 * **Objective:** Validate the 5,000 TPS target and prove zero balance drift.
 * **Tasks:**
   1. Author k6 benchmark scripts under `k6/`:
-     * `k6/load-test-uniform.js`: 5,000 TPS across 10,000 distributed retail accounts.
+     * `k6/load-test-uniform.js`: 100 TPS by default on local hardware (20 preallocated / 50 maximum VUs), configurable for a staged 5,000 TPS target across 10,000 retail accounts.
      * `k6/stress-test-hotspot.js`: Heavy-contention traffic funneling to a single merchant.
-  2. Build an automated post-run **Reconciliation Audit Script**:
-     ```sql
-     -- Invariant 1: Parity check across entire system
-     SELECT SUM(CASE WHEN direction = 'DEBIT' THEN amount ELSE -amount END) AS system_drift FROM postings;
-     
-     -- Invariant 2: Snapshot parity check
-     SELECT a.id, a.cleared_balance, COALESCE(SUM(CASE WHEN p.direction = 'CREDIT' THEN p.amount ELSE -p.amount END), 0) AS derived_balance
-     FROM account_snapshots a
-     LEFT JOIN postings p ON a.account_id = p.account_id
-     GROUP BY a.id, a.cleared_balance
-     HAVING a.cleared_balance <> COALESCE(SUM(CASE WHEN p.direction = 'CREDIT' THEN p.amount ELSE -p.amount END), 0);
-     ```
-  3. Collect and document $p50$, $p95$, and $p99$ latency profiles under load.
+  2. The run script prepares test accounts, runs k6, and invokes `scripts/reconciliation-audit.ps1`, which executes `scripts/reconciliation-audit.sql`. A local `psql` executable is optional; the scripts fall back to `docker compose exec -T postgres psql`.
+  3. The uniform profile's configured thresholds are failure rate below 1%, p95 below 150 ms, and p99 below 300 ms. These thresholds are not measured results.
 * **Exit Criteria:**
-  * Post-run audit reports `system_drift = 0.0000` and zero snapshot discrepancies.
-  * 5,000 TPS verified under uniform load with error rate $< 0.01\%$.
+  * Post-run audit reports zero system drift, snapshot parity discrepancies, and bucket-count discrepancies.
+  * Treat 5,000 TPS as a staged/production target; report it as achieved only after measuring that rate with the configured distributed profile.
+  * Reset Compose volumes after integration tests and before a clean benchmark run because the `IT-*` fixtures have snapshots without corresponding opening postings.

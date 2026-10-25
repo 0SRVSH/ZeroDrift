@@ -12,7 +12,7 @@ if (-not $psql) {
     $docker = Get-Command docker -ErrorAction Stop
 }
 $sqlFile = Join-Path $PSScriptRoot 'prepare-load-test.sql'
-$accountPoolFile = Join-Path ([System.IO.Path]::GetTempPath()) 'zerodrift-load-test-accounts.json'
+$accountPoolFile = Join-Path (Split-Path $PSScriptRoot -Parent) 'k6\load-test-accounts.json'
 $previousPassword = $env:PGPASSWORD
 
 try {
