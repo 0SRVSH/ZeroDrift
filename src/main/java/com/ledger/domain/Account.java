@@ -32,6 +32,9 @@ public class Account {
     @Column(name = "is_active", nullable = false)
     private boolean active;
 
+    @Column(name = "bucket_count", nullable = false)
+    private int bucketCount = 1;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -40,11 +43,20 @@ public class Account {
 
     public Account(String accountNumber, String currency, AccountType accountType, boolean active,
                    OffsetDateTime createdAt) {
+        this(accountNumber, currency, accountType, active, createdAt, 1);
+    }
+
+    public Account(String accountNumber, String currency, AccountType accountType, boolean active,
+                   OffsetDateTime createdAt, int bucketCount) {
+        if (bucketCount < 1) {
+            throw new IllegalArgumentException("Bucket count must be at least one");
+        }
         this.accountNumber = accountNumber;
         this.currency = currency;
         this.accountType = accountType;
         this.active = active;
         this.createdAt = createdAt;
+        this.bucketCount = bucketCount;
     }
 
     public UUID getId() {
@@ -65,6 +77,10 @@ public class Account {
 
     public boolean isActive() {
         return active;
+    }
+
+    public int getBucketCount() {
+        return bucketCount;
     }
 
     public OffsetDateTime getCreatedAt() {

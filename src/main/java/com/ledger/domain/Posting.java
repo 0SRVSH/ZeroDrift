@@ -33,6 +33,12 @@ public class Posting {
     @Column(name = "account_id", nullable = false)
     private UUID accountId;
 
+    @Column(name = "bucket_index", nullable = false)
+    private Integer bucketIndex;
+
+    @Column(name = "posting_sequence", nullable = false, insertable = false, updatable = false)
+    private Long postingSequence;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 6)
     private PostingDirection direction;
@@ -50,10 +56,11 @@ public class Posting {
     protected Posting() {
     }
 
-    public Posting(UUID journalEntryId, UUID accountId, PostingDirection direction, BigDecimal amount,
-                   Integer sequenceOrder, OffsetDateTime createdAt) {
+    public Posting(UUID journalEntryId, UUID accountId, int bucketIndex, PostingDirection direction,
+                   BigDecimal amount, Integer sequenceOrder, OffsetDateTime createdAt) {
         this.journalEntryId = journalEntryId;
         this.accountId = accountId;
+        this.bucketIndex = bucketIndex;
         this.direction = direction;
         this.amount = amount.setScale(AMOUNT_SCALE, RoundingMode.UNNECESSARY);
         this.sequenceOrder = sequenceOrder;
@@ -70,6 +77,14 @@ public class Posting {
 
     public UUID getAccountId() {
         return accountId;
+    }
+
+    public Integer getBucketIndex() {
+        return bucketIndex;
+    }
+
+    public Long getPostingSequence() {
+        return postingSequence;
     }
 
     public PostingDirection getDirection() {

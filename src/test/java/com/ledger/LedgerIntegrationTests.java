@@ -17,6 +17,7 @@ import com.ledger.repository.AccountRepository;
 import com.ledger.repository.AccountSnapshotRepository;
 import com.ledger.repository.JournalEntryRepository;
 import com.ledger.repository.PostingRepository;
+import com.ledger.service.SnapshotCheckpointService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,10 +25,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -51,6 +54,9 @@ class LedgerIntegrationTests extends AbstractLedgerIntegrationTest {
 
     @Autowired
     private PostingRepository postingRepository;
+
+    @Autowired
+    private SnapshotCheckpointService snapshotCheckpointService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -188,6 +194,78 @@ class LedgerIntegrationTests extends AbstractLedgerIntegrationTest {
         assertBalance(accounts.destination().getId(), new BigDecimal("5.0000"));
     }
 
+    @Test
+    void creditsToShardedAccountUseBucketsAndBalanceReadAggregatesThem() {
+        int bucketCount = 4;
+        int transferCount = 80;
+        Account source = createAccountWithBuckets(new BigDecimal("100.0000"), 1);
+        Account destination = createAccountWithBuckets(ZERO, bucketCount);
+        for (int index = 0; index < transferCount; index++) {
+            ResponseEntity<TransactionResponse> response = submit(new PostTransactionRequest(
+                    "sharded-" + UUID.randomUUID(), "Credit sharded account", List.of(
+                    new PostingRequest(source.getId(), PostingDirection.CREDIT, BigDecimal.ONE),
+                    new PostingRequest(destination.getId(), PostingDirection.DEBIT, BigDecimal.ONE))));
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        }
+
+        List<AccountSnapshot> snapshots =
+                accountSnapshotRepository.findAllByAccountIdOrderByBucketIndexAsc(destination.getId());
+        assertThat(snapshots).hasSize(bucketCount);
+        assertThat(snapshots).extracting(AccountSnapshot::getClearedBalance)
+                .allSatisfy(balance -> assertThat(balance).isBetween(
+                        new BigDecimal("5.0000"), new BigDecimal("35.0000")));
+        ResponseEntity<AccountBalanceResponse> response = restTemplate.getForEntity(
+                "/api/v1/ledger/accounts/{accountId}/balance", AccountBalanceResponse.class, destination.getId());
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().clearedBalance()).isEqualByComparingTo(new BigDecimal("80.0000"));
+        assertThat(response.getBody().pendingBalance()).isEqualByComparingTo(ZERO);
+    }
+
+    @Test
+    void debitFromShardedAccountUsesAndUpdatesAvailableBuckets() {
+        Account source = createAccountWithBuckets(new BigDecimal("20.0000"), 4);
+        Account destination = createAccountWithBuckets(ZERO, 1);
+        PostTransactionRequest request = transfer(
+                new AccountPair(source, destination), "sharded-debit-" + UUID.randomUUID(),
+                new BigDecimal("15.0000"));
+
+        TransactionResponse transaction = submit(request).getBody();
+
+        assertThat(transaction).isNotNull();
+        List<Posting> postings =
+                postingRepository.findAllByJournalEntryIdOrderBySequenceOrderAsc(transaction.journalEntryId());
+        assertThat(postings).hasSize(4);
+        assertThat(postings.stream()
+                .filter(posting -> posting.getAccountId().equals(source.getId()))
+                .map(Posting::getAmount)
+                .reduce(ZERO, BigDecimal::add)).isEqualByComparingTo(new BigDecimal("15.0000"));
+        assertThat(balance(source.getId())).isEqualByComparingTo(new BigDecimal("5.0000"));
+        assertThat(balance(destination.getId())).isEqualByComparingTo(new BigDecimal("15.0000"));
+    }
+
+    @Test
+    void checkpointReconcilesSnapshotBalancesFromUncheckpointedPostings() {
+        AccountPair accounts = createAccountPair(new BigDecimal("100.0000"), ZERO);
+        TransactionResponse transaction = submit(
+                transfer(accounts, "checkpoint-" + UUID.randomUUID(), TEN)).getBody();
+        assertThat(transaction).isNotNull();
+
+        List<AccountSnapshot> snapshots = accountSnapshotRepository.findAllByAccountIdOrderByBucketIndexAsc(
+                accounts.source().getId());
+        snapshots.getFirst().applyClearedBalance(new BigDecimal("100.0000"), null, 0L, OffsetDateTime.now());
+        accountSnapshotRepository.saveAndFlush(snapshots.getFirst());
+        snapshots = accountSnapshotRepository.findAllByAccountIdOrderByBucketIndexAsc(accounts.destination().getId());
+        snapshots.getFirst().applyClearedBalance(ZERO, null, 0L, OffsetDateTime.now());
+        accountSnapshotRepository.saveAndFlush(snapshots.getFirst());
+
+        snapshotCheckpointService.checkpointSnapshots();
+
+        assertBalance(accounts.source().getId(), new BigDecimal("90.0000"));
+        assertBalance(accounts.destination().getId(), new BigDecimal("10.0000"));
+        assertThat(accountSnapshotRepository.findAllByAccountIdOrderByBucketIndexAsc(accounts.source().getId())
+                .getFirst().getLastJournalEntryId()).isEqualTo(transaction.journalEntryId());
+    }
+
     private AccountPair createAccountPair(BigDecimal sourceBalance, BigDecimal destinationBalance) {
         OffsetDateTime now = OffsetDateTime.now();
         String accountSuffix = UUID.randomUUID().toString();
@@ -200,6 +278,20 @@ class LedgerIntegrationTests extends AbstractLedgerIntegrationTest {
                 new AccountSnapshot(source.getId(), sourceBalance, ZERO, 0L, null, now),
                 new AccountSnapshot(destination.getId(), destinationBalance, ZERO, 0L, null, now)));
         return new AccountPair(source, destination);
+    }
+
+    private Account createAccountWithBuckets(BigDecimal initialBalance, int bucketCount) {
+        OffsetDateTime now = OffsetDateTime.now();
+        Account account = accountRepository.saveAndFlush(new Account(
+                "IT-BUCKETED-" + UUID.randomUUID(), "USD", AccountType.ASSET, true, now, bucketCount));
+        BigDecimal perBucket = initialBalance.divide(BigDecimal.valueOf(bucketCount), 4, RoundingMode.DOWN);
+        BigDecimal remainder = initialBalance.subtract(perBucket.multiply(BigDecimal.valueOf(bucketCount)));
+        List<AccountSnapshot> snapshots = IntStream.range(0, bucketCount)
+                .mapToObj(bucketIndex -> new AccountSnapshot(account.getId(), bucketIndex,
+                        bucketIndex == 0 ? perBucket.add(remainder) : perBucket, ZERO, 0L, null, 0L, now))
+                .toList();
+        accountSnapshotRepository.saveAllAndFlush(snapshots);
+        return account;
     }
 
     private PostTransactionRequest transfer(AccountPair accounts, String idempotencyKey, BigDecimal amount) {

@@ -15,7 +15,8 @@ src/main/resources/
         ├── V1__init_core_ledger_schema.sql
         ├── V2__add_debit_credit_parity_trigger.sql
         ├── V3__add_performance_indexes.sql
-        └── V4__align_schema_with_domain_model.sql
+        ├── V4__align_schema_with_domain_model.sql
+        └── V5__add_account_bucketing.sql
 ```
 
 Add PostgreSQL and Flyway dependencies to `pom.xml`:
@@ -176,6 +177,17 @@ ON journal_entries (posted_at DESC);
 rewriting an applied migration. It adds the snapshot UUID and pending balance,
 makes the UUID the snapshot primary key while retaining a unique account ID,
 and changes journal-entry statuses to `COMMITTED` and `REJECTED`.
+
+### Step 4b: Add snapshot buckets and posting checkpoints
+
+`V5__add_account_bucketing.sql` adds a configurable `bucket_count` to each
+account and replaces the single-snapshot-per-account constraint with a unique
+`(account_id, bucket_index)` key. Existing accounts retain one bucket, and
+existing snapshots/postings are migrated into bucket zero. Postings receive
+bucket attribution and an immutable monotonic sequence; snapshots retain the
+last reconciled sequence so the scheduled checkpoint can apply only unseen
+postings. The checkpoint interval can be configured with
+`LEDGER_CHECKPOINT_INTERVAL_MS` (default 60 seconds).
 
 ---
 

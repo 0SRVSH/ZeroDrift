@@ -21,7 +21,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.net.URI;
+import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -52,10 +55,21 @@ public class LedgerController {
 
     @GetMapping("/accounts/{accountId}/balance")
     public AccountBalanceResponse getBalance(@PathVariable UUID accountId) {
-        AccountSnapshot snapshot = accountSnapshotRepository.findByAccountId(accountId)
-                .orElseThrow(() -> new AccountNotFoundException("Account not found: " + accountId));
-        return new AccountBalanceResponse(snapshot.getAccountId(), snapshot.getClearedBalance(),
-                snapshot.getPendingBalance(), snapshot.getUpdatedAt());
+        List<AccountSnapshot> snapshots = accountSnapshotRepository.findAllByAccountIdOrderByBucketIndexAsc(accountId);
+        if (snapshots.isEmpty()) {
+            throw new AccountNotFoundException("Account not found: " + accountId);
+        }
+        BigDecimal clearedBalance = BigDecimal.ZERO.setScale(4);
+        BigDecimal pendingBalance = BigDecimal.ZERO.setScale(4);
+        OffsetDateTime updatedAt = null;
+        for (AccountSnapshot snapshot : snapshots) {
+            clearedBalance = clearedBalance.add(snapshot.getClearedBalance());
+            pendingBalance = pendingBalance.add(snapshot.getPendingBalance());
+            if (updatedAt == null || snapshot.getUpdatedAt().isAfter(updatedAt)) {
+                updatedAt = snapshot.getUpdatedAt();
+            }
+        }
+        return new AccountBalanceResponse(accountId, clearedBalance, pendingBalance, updatedAt);
     }
 
     @GetMapping("/transactions/{id}")

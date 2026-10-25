@@ -31,3 +31,6 @@ spring:
       config: |
         singleServerConfig:
           address: "redis://${REDIS_HOST:localhost}:${REDIS_PORT:6379}"
+ledger:
+  checkpoint:
+    interval-ms: ${LEDGER_CHECKPOINT_INTERVAL_MS:60000}
