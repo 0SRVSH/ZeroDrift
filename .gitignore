@@ -1,0 +1,17 @@
+# Maven build target directory
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+
+# VS Code directory
+.vscode/
+
+# Environment files & local overrides
+.env
+*.local
+*.local.md
+
+# Operating System files
+.DS_Store
+Thumbs.db
