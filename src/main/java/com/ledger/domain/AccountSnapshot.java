@@ -85,4 +85,10 @@ public class AccountSnapshot {
     public OffsetDateTime getUpdatedAt() {
         return updatedAt;
     }
+
+    public void applyClearedBalance(BigDecimal balance, UUID journalEntryId, OffsetDateTime updatedAt) {
+        this.clearedBalance = normalizeBalance(balance);
+        this.lastJournalEntryId = journalEntryId;
+        this.updatedAt = updatedAt;
+    }
 }

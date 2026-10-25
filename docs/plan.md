@@ -44,46 +44,37 @@ This implementation plan is structured for phased execution by an engineering te
 
 ---
 
-### Phase 3: Core Transfer Engine & Deterministic Concurrency Control
+### Phase 3: Core Ledger Engine & Deterministic Concurrency Control
 
-* **Objective:** Implement the core double-entry transfer pipeline with guaranteed zero negative balances and deadlock prevention[cite: 1].
+* **Objective:** Implement a balanced, multi-posting ledger pipeline with deterministic locking, non-negative normal balances, and idempotent execution.
 * **Tasks:**
-  1. Create `TransferService` with transactional execution (`@Transactional(isolation = Isolation.READ_COMMITTED)`).
-  2. Implement transfer validation pipeline:
-     * Sort input account UUIDs ascending (`sourceId`, `destinationId`)[cite: 1].
-     * Acquire pessimistic row locks across snapshots in that sorted sequence[cite: 1].
-     * Validate currency match and check that `clearedBalance >= transferAmount`.
-     * Throw `InsufficientFundsException` on balance shortfall.
-  3. Implement ledger persistence:
-     * Insert `journal_entries` record[cite: 1].
-     * Insert two `postings` records: Leg 1 (Source, DEBIT, amount) and Leg 2 (Destination, CREDIT, amount)[cite: 1].
-     * Update source snapshot (`clearedBalance - amount`) and destination snapshot (`clearedBalance + amount`).
+  1. Define transaction request and response DTOs for an idempotency key, narration, and at least two account postings.
+  2. Validate positive amounts at scale 4 and enforce exact debit-credit parity before persistence.
+  3. Implement `LedgerEngineService` with `@Transactional(isolation = Isolation.READ_COMMITTED)`:
+     * Sort distinct account UUIDs ascending before locking snapshots[cite: 1].
+     * Verify every referenced account exists, is active, and uses the transaction currency.
+     * Apply debit-normal accounting to asset/expense accounts and credit-normal accounting to liability/equity/revenue accounts; reject a negative resulting normal balance.
+     * Append a committed journal entry and its immutable postings; update the locked snapshots and their optimistic versions.
+  4. Implement `LedgerOrchestrator` outside the engine transaction:
+     * Acquire a Redisson lock scoped to the idempotency key before examining or changing idempotency records.
+     * Return a cached response for a matching committed request; reject pending or conflicting key reuse.
+     * Save a pending record, invoke the transactional engine, then persist the serialized committed response before releasing the lock.
 * **Exit Criteria:**
-  * Multi-threaded integration test firing 100 concurrent transfers in opposite directions ($A \to B$ and $B \to A$) completes with **zero deadlocks** and exact balance conservation.
+  * Multi-threaded tests firing transfers in opposite directions complete with **zero deadlocks** and exact balance conservation.
+  * Repeated requests with the same idempotency key do not create duplicate journal entries or postings.
 
 ---
 
-### Phase 4: Distributed Idempotency Pipeline & Web API Layer
+### Phase 4: Web API Layer
 
-* **Objective:** Expose a resilient REST API protected by Redis distributed locks and a database-backed idempotency state machine[cite: 1].
+* **Objective:** Expose the ledger pipeline through a resilient REST API[cite: 1].
 * **Tasks:**
-  1. Define API request/response DTOs:
-     * `TransferRequest` (sourceAccountId, destinationAccountId, amount, currency, narration).
-     * `TransferResponse` (transactionId, status, postedAt, debitedAmount, creditedAmount).
-  2. Implement `IdempotencyService` and an outer orchestrator (non-transactional):
-     * Enforce presence of `Idempotency-Key` header[cite: 1].
-     * Acquire a short-lived distributed lock via Redisson: `lock:idempotency:<key>`.
-     * Check database `idempotency_records`:
-       * If `COMMITTED`: return cached response body directly (HTTP 200)[cite: 1].
-       * If `PENDING`: reject concurrent duplicate request with HTTP `409 Conflict`[cite: 1].
-       * If non-existent: insert row with status `PENDING` and request payload hash[cite: 1].
-     * Delegate to `@Transactional` `TransferService`.
-     * Upon commit, update idempotency record to `COMMITTED` with the serialized JSON response payload[cite: 1].
-     * On unrecoverable validation failure, mark as `REJECTED`[cite: 1].
-     * Release Redisson distributed lock in a `finally` block.
-  3. Implement `TransferController` mapping `POST /api/v1/transfers`.
+  1. Implement a controller accepting the general multi-posting transaction DTO and delegating to `LedgerOrchestrator`.
+  2. Enforce the required idempotency key at the HTTP boundary; map pending or conflicting key reuse to HTTP `409 Conflict`.
+  3. Map validation, balance, and account-state failures to explicit client error responses.
+  4. Implement the transaction endpoint under `/api/v1/transactions`.
 * **Exit Criteria:**
-  * Firing 20 concurrent requests with the identical `Idempotency-Key` results in exactly 1 database write and 19 cached responses or conflict rejections, with zero duplicate debits[cite: 1].
+  * Firing 20 concurrent requests with an identical `Idempotency-Key` results in one committed transaction and no duplicate postings.
 
 ---
 

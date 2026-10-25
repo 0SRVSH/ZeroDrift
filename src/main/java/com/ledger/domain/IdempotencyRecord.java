@@ -71,4 +71,12 @@ public class IdempotencyRecord {
     public OffsetDateTime getExpiresAt() {
         return expiresAt;
     }
+
+    public void markCommitted(String responsePayload) {
+        if (status != IdempotencyStatus.PENDING) {
+            throw new IllegalStateException("Only pending idempotency records can be committed");
+        }
+        this.status = IdempotencyStatus.COMMITTED;
+        this.responsePayload = responsePayload;
+    }
 }
