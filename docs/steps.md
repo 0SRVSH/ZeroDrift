@@ -14,7 +14,8 @@ src/main/resources/
     └── migration/
         ├── V1__init_core_ledger_schema.sql
         ├── V2__add_debit_credit_parity_trigger.sql
-        └── V3__add_performance_indexes.sql
+        ├── V3__add_performance_indexes.sql
+        └── V4__align_schema_with_domain_model.sql
 ```
 
 Add PostgreSQL and Flyway dependencies to `pom.xml`:
@@ -168,6 +169,13 @@ WHERE status = 'PENDING';
 CREATE INDEX idx_journal_entries_posted_at 
 ON journal_entries (posted_at DESC);
 ```
+
+### Step 4a: Align the schema with the domain model
+
+`V4__align_schema_with_domain_model.sql` evolves the initial schema without
+rewriting an applied migration. It adds the snapshot UUID and pending balance,
+makes the UUID the snapshot primary key while retaining a unique account ID,
+and changes journal-entry statuses to `COMMITTED` and `REJECTED`.
 
 ---
 

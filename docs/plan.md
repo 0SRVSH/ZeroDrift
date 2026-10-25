@@ -32,17 +32,12 @@ This implementation plan is structured for phased execution by an engineering te
 * **Tasks:**
   1. Implement immutable domain records / entities:
      * `Account` (UUID id, accountNumber, currency, accountType, isActive)
-     * `AccountSnapshot` (accountId, clearedBalance as `BigDecimal`, version, lastJournalEntryId)
-     * `JournalEntry` (id, idempotencyKey, narration, status, postedAt)
-     * `Posting` (id, journalEntryId, accountId, direction [`DEBIT`/`CREDIT`], amount as `BigDecimal`, sequenceOrder)[cite: 1]
-     * `IdempotencyRecord` (idempotencyKey, status [`PENDING`/`COMMITTED`/`REJECTED`], requestHash, responsePayload, expiresAt)[cite: 1]
-  2. Implement `AccountSnapshotRepository` using Spring Data JPA or `JdbcClient` with an explicit deterministic pessimistic locking query:
-     ```java
-     @Query("SELECT s FROM AccountSnapshot s WHERE s.accountId IN :ids ORDER BY s.accountId ASC")
-     @Lock(LockModeType.PESSIMISTIC_WRITE)
-     List<AccountSnapshot> lockAccountsForUpdate(@Param("ids") List<UUID> ids);
-     ```
-  3. Create repositories for `JournalEntryRepository`, `PostingRepository`, and `IdempotencyRecordRepository`.
+     * `AccountSnapshot` (UUID id and accountId, cleared and pending balances as `BigDecimal`, version, lastJournalEntryId, updatedAt)
+     * `JournalEntry` (id, idempotencyKey, narration, status [`COMMITTED`/`REJECTED`], postedAt), immutable and append-only
+     * `Posting` (id, journalEntryId, accountId, direction [`DEBIT`/`CREDIT`], amount as `BigDecimal`, sequenceOrder), immutable and append-only[cite: 1]
+     * `IdempotencyRecord` (idempotencyKey, status [`PENDING`/`COMMITTED`/`REJECTED`], requestHash, JSON responsePayload, createdAt, expiresAt)[cite: 1]
+  2. Create Spring Data repositories for all five entities. `AccountSnapshotRepository` must provide an ordered pessimistic write-lock query by account ID.
+  3. Use explicit scale-4 `BigDecimal` mappings for monetary fields; normalize constructor values with `RoundingMode.UNNECESSARY`.
 * **Exit Criteria:**
   * Unit tests confirm `AccountSnapshot` amounts cannot be instantiated using `Double` or `Float`.
   * Repository tests verify that `lockAccountsForUpdate` returns accounts in strictly sorted ascending order.
