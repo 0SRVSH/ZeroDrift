@@ -82,13 +82,14 @@ This implementation plan is structured for phased execution by an engineering te
 
 * **Objective:** Validate system invariants under multithreaded contention without mocking storage layers.
 * **Tasks:**
-  1. Configure `Testcontainers` for PostgreSQL 16 and Redis 7 in `src/test/java`.
-  2. Implement multithreaded test suites using `CompletableFuture` / `ExecutorService`:
-     * **Bidirectional Deadlock Suite:** 50 threads executing cross-transfers concurrently between Account 1 and Account 2.
+  1. Configure `Testcontainers` for PostgreSQL 16 (`postgres:16-alpine`) and Redis 7 (`redis:7-alpine`) in `src/test/java`, registering container connection details dynamically.
+  2. Implement REST integration tests for balanced transactions, rejected unbalanced transactions, and idempotent retries; verify persisted immutable journal entries and postings as well as snapshot balances.
+  3. Implement multithreaded test suites using `ExecutorService` and synchronized request start:
+     * **Bidirectional Deadlock Suite:** Concurrent cross-transfers between two accounts; require all requests to complete within a strict timeout and preserve total balance.
      * **Balance Depletion Suite:** 20 threads simultaneously attempting to debit an account holding balance for only 5 transfers; assert exactly 5 succeed and 15 fail with `InsufficientFundsException`.
-     * **Network Retry Simulation:** Simulate client timeouts by re-sending identical payload with the same idempotency key across different threads.
+     * **Network Retry Simulation:** Re-send an identical payload with the same idempotency key and verify the cached response and absence of duplicate journal entries or postings.
 * **Exit Criteria:**
-  * `mvn clean verify` passes with 100% test success across all concurrent scenarios.
+  * `mvn clean test` passes with 100% test success across all integration and concurrent scenarios.
 
 ---
 
