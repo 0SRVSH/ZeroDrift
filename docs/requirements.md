@@ -1,7 +1,6 @@
 # requirements.md
 
-This document serves as the master specification, architectural constraint definition, and AI prompt guardrail for the High-Performance Double-Entry Financial Ledger project[cite: 1]. 
-
+This document serves as the master specification, architectural constraint definition, and AI prompt guardrail for the High-Performance Double-Entry Financial Ledger project.
 Any AI code assistant (e.g., Cursor, Claude Code, GitHub Copilot) reading this repository **must strictly obey the directives, architectural boundaries, and warnings detailed herein**.
 
 ---
@@ -9,27 +8,27 @@ Any AI code assistant (e.g., Cursor, Claude Code, GitHub Copilot) reading this r
 ## 1. System Invariants & Functional Requirements
 
 ### 1.1 Invariant 1: Absolute Debit-Credit Parity (Zero Drift)
-* Every financial transaction is represented by a single `journal_entry` comprising at least two `postings`[cite: 1].
-* For every transaction, the algebraic sum of all debits and credits must evaluate to zero[cite: 1]:
+* Every financial transaction is represented by a single `journal_entry` comprising at least two `postings`.
+* For every transaction, the algebraic sum of all debits and credits must evaluate to zero:
   $$\sum \text{Debits} - \sum \text{Credits} \equiv 0.0000$$
-* Parity is enforced not merely at the application layer, but directly at the database storage engine via deferred constraint triggers[cite: 1]. Any transaction violating this rule must fail at commit time[cite: 1].
+* Parity is enforced not merely at the application layer, but directly at the database storage engine via deferred constraint triggers. Any transaction violating this rule must fail at commit time.
 
 ### 1.2 Invariant 2: Append-Only Immutability
-* Balances are never modified directly with destructive updates (`UPDATE accounts SET balance = balance - X` is forbidden)[cite: 1].
-* Ledger postings and journal entries are strictly append-only[cite: 1].
-* No `UPDATE` or `DELETE` SQL queries shall be issued or configured for the `postings` or `journal_entries` tables[cite: 1].
+* Balances are never modified directly with destructive updates (`UPDATE accounts SET balance = balance - X` is forbidden).
+* Ledger postings and journal entries are strictly append-only.
+* No `UPDATE` or `DELETE` SQL queries shall be issued or configured for the `postings` or `journal_entries` tables.
 * Corrections, adjustments, or cancellations must be issued as new, discrete offsetting journal entries.
 
 ### 1.3 Invariant 3: Exact-Once Execution & Idempotency
-* Every state-changing API request must provide an `Idempotency-Key` header[cite: 1].
-* Requests are processed through a three-phase state machine: `PENDING`, `COMMITTED`, or `REJECTED`[cite: 1].
-* Retried requests with an identical idempotency key must return the original cached response payload without re-executing transfers[cite: 1].
-* In-flight requests bearing an active `PENDING` key must be rejected with HTTP `409 Conflict` (or HTTP `425 Too Early`) to prevent concurrent race collisions[cite: 1].
+* Every state-changing API request must provide an `Idempotency-Key` header.
+* Requests are processed through a three-phase state machine: `PENDING`, `COMMITTED`, or `REJECTED`.
+* Retried requests with an identical idempotency key must return the original cached response payload without re-executing transfers.
+* In-flight requests bearing an active `PENDING` key must be rejected with HTTP `409 Conflict` (or HTTP `425 Too Early`) to prevent concurrent race collisions.
 
 ### 1.4 Invariant 4: Deterministic Concurrency Control
-* High-concurrency operations across identical accounts must not result in cyclic deadlocks or negative-balance race conditions[cite: 1].
-* All pessimistic database row locks (`SELECT ... FOR UPDATE`) must be acquired in a globally deterministic order (e.g., sorted lexicographically by account UUID)[cite: 1].
-* To support high throughput (targeting 5,000 TPS under benchmark load), balances are anchored by materialized account snapshots rather than scanning unbounded historical tables[cite: 1].
+* High-concurrency operations across identical accounts must not result in cyclic deadlocks or negative-balance race conditions.
+* All pessimistic database row locks (`SELECT ... FOR UPDATE`) must be acquired in a globally deterministic order (e.g., sorted lexicographically by account UUID).
+* To support high throughput (targeting 5,000 TPS under benchmark load), balances are anchored by materialized account snapshots rather than scanning unbounded historical tables.
 
 ---
 
@@ -56,17 +55,17 @@ Any AI code assistant (e.g., Cursor, Claude Code, GitHub Copilot) reading this r
   ```
 
 ### ⚠️ Warning 3: Row-Level Locking Deadlocks
-* **Violation:** Querying `SELECT ... FOR UPDATE` using the account order provided by the client request payload (e.g., locking `source_account` then locking `destination_account`)[cite: 1].
+* **Violation:** Querying `SELECT ... FOR UPDATE` using the account order provided by the client request payload (e.g., locking `source_account` then locking `destination_account`).
 * **Failure Mode:** If User A transfers to User B while User B transfers to User A simultaneously:
   * Thread 1 locks A, attempts to lock B.
   * Thread 2 locks B, attempts to lock A.
   * Result: PostgreSQL detects a cyclic dependency and throws `PSQLException: ERROR: deadlock detected`.
-* **Mandatory Rule:** Collect all affected account UUIDs, sort them ascending (`ids.stream().sorted().toList()`), and execute row-level locks strictly in that deterministic sequence[cite: 1].
+* **Mandatory Rule:** Collect all affected account UUIDs, sort them ascending (`ids.stream().sorted().toList()`), and execute row-level locks strictly in that deterministic sequence.
 
 ### ⚠️ Warning 4: Derived Balance Table-Scan Bottlenecks
-* **Violation:** Calculating an account's available balance by executing `SELECT SUM(...) FROM postings WHERE account_id = ?` under a write lock during high TPS transfers[cite: 1].
+* **Violation:** Calculating an account's available balance by executing `SELECT SUM(...) FROM postings WHERE account_id = ?` under a write lock during high TPS transfers.
 * **Failure Mode:** As the `postings` table grows into millions of rows, write latency degrades linearly ($O(N)$), causing lock hold times to skyrocket and thread pools to exhaust.
-* **Mandatory Rule:** Acquire the row lock on `account_snapshots`[cite: 1]. Derive real-time balance using the materialized snapshot balance combined only with postings created *after* the snapshot's recorded sequence checkpoint.
+* **Mandatory Rule:** Acquire the row lock on `account_snapshots`. Derive real-time balance using the materialized snapshot balance combined only with postings created *after* the snapshot's recorded sequence checkpoint.
 
 ### ⚠️ Warning 5: Virtual Thread Pinning
 * **Violation:** Performing long-running or blocking native/foreign-function operations on virtual threads in the transfer pipeline.
@@ -82,9 +81,9 @@ To prevent code drift and unverified implementations, any AI interacting with th
 1. **No Silent Scaffolding:** Do NOT generate multiple complex service classes or database schema changes at once without first explaining the concurrency implications.
 2. **Explain First, Implement Second:** Before generating code for any phase:
    * Explain which lock boundaries are being introduced.
-   * State clearly how the debit-credit parity invariant is preserved[cite: 1].
+   * State clearly how the debit-credit parity invariant is preserved.
    * Identify potential failure modes (e.g., deadlocks, timeout rollbacks, network partition risks).
-3. **Wait for Developer Confirmation:** When dealing with core transaction boundaries, idempotency transitions, and database triggers, summarize the design and wait for human review before outputting production code[cite: 1].
+3. **Wait for Developer Confirmation:** When dealing with core transaction boundaries, idempotency transitions, and database triggers, summarize the design and wait for human review before outputting production code.
 
 ---
 
@@ -92,8 +91,8 @@ To prevent code drift and unverified implementations, any AI interacting with th
 
 | Failure Scenario | Risk | Mitigation Strategy |
 | :--- | :--- | :--- |
-| **Simultaneous Bidirectional Transfers ($A \to B$ & $B \to A$)** | Relational database cyclic deadlock. | Sort account IDs lexicographically prior to issuing `SELECT ... FOR UPDATE`[cite: 1]. |
-| **Network Timeout Post-DB Commit** | Client receives timeout error, retries transfer, risking double-debiting[cite: 1]. | Client supplies unique `Idempotency-Key`[cite: 1]. Service detects existing `COMMITTED` status and returns cached result payload[cite: 1]. |
-| **Concurrent Duplicate API Submissions** | Two identical requests hit different backend instances at the exact same millisecond. | Redis distributed lock on `idempotency:<key>` serializes request intake; first thread inserts `PENDING` in PostgreSQL; second thread is rejected with HTTP 409[cite: 1]. |
+| **Simultaneous Bidirectional Transfers ($A \to B$ & $B \to A$)** | Relational database cyclic deadlock. | Sort account IDs lexicographically prior to issuing `SELECT ... FOR UPDATE`. |
+| **Network Timeout Post-DB Commit** | Client receives timeout error, retries transfer, risking double-debiting. | Client supplies unique `Idempotency-Key`. Service detects existing `COMMITTED` status and returns cached result payload. |
+| **Concurrent Duplicate API Submissions** | Two identical requests hit different backend instances at the exact same millisecond. | Redis distributed lock on `idempotency:<key>` serializes request intake; first thread inserts `PENDING` in PostgreSQL; second thread is rejected with HTTP 409. |
 | **Hot-Spot Merchant Account** | Thousands of buyers credit a single merchant account concurrently, serializing on one row lock. | Decouple authorization holds from clearing, or implement balance sharding (splitting account snapshot into $N$ buckets). |
-| **Unbalanced Transaction Injection** | Application bug inserts mismatched debit and credit legs. | PostgreSQL deferred constraint trigger `trg_postings_verify_parity` rejects the commit at storage level[cite: 1]. |
+| **Unbalanced Transaction Injection** | Application bug inserts mismatched debit and credit legs. | PostgreSQL deferred constraint trigger `trg_postings_verify_parity` rejects the commit at storage level. |

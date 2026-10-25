@@ -3,6 +3,7 @@ package com.ledger.service;
 import com.ledger.domain.PostingDirection;
 import com.ledger.dto.PostTransactionRequest;
 import com.ledger.dto.PostingRequest;
+import com.ledger.exception.UnbalancedTransactionException;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;

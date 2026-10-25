@@ -11,6 +11,9 @@ import com.ledger.dto.PostTransactionRequest;
 import com.ledger.dto.PostingRequest;
 import com.ledger.dto.PostingResponse;
 import com.ledger.dto.TransactionResponse;
+import com.ledger.exception.AccountNotFoundException;
+import com.ledger.exception.InsufficientFundsException;
+import com.ledger.exception.UnbalancedTransactionException;
 import com.ledger.repository.AccountRepository;
 import com.ledger.repository.AccountSnapshotRepository;
 import com.ledger.repository.JournalEntryRepository;
@@ -65,10 +68,10 @@ public class LedgerEngineService {
             accountsById.put(account.getId(), account);
         }
         if (accountsById.size() != accountIds.size()) {
-            throw new IllegalArgumentException("Transaction references an unknown account");
+            throw new AccountNotFoundException("One or more transaction accounts were not found");
         }
         if (snapshotsByAccountId.size() != accountIds.size()) {
-            throw new IllegalArgumentException("Every referenced account must have an account snapshot");
+            throw new AccountNotFoundException("One or more transaction accounts have no balance snapshot");
         }
 
         String currency = null;

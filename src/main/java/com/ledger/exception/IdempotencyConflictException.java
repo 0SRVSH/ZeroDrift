@@ -1,4 +1,4 @@
-package com.ledger.service;
+package com.ledger.exception;
 
 public class IdempotencyConflictException extends RuntimeException {
     public IdempotencyConflictException(String message) {

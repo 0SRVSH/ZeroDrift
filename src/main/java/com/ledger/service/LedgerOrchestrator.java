@@ -7,6 +7,7 @@ import com.ledger.domain.IdempotencyStatus;
 import com.ledger.dto.PostTransactionRequest;
 import com.ledger.dto.PostingRequest;
 import com.ledger.dto.TransactionResponse;
+import com.ledger.exception.IdempotencyConflictException;
 import com.ledger.repository.IdempotencyRecordRepository;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
@@ -40,7 +41,7 @@ public class LedgerOrchestrator {
         this.objectMapper = objectMapper;
     }
 
-    public TransactionResponse postTransaction(PostTransactionRequest request) {
+    public TransactionResponse processTransaction(PostTransactionRequest request) {
         validationService.validate(request);
         String requestHash = hashRequest(request);
         RLock lock = redissonClient.getLock("lock:txn:" + request.getIdempotencyKey());

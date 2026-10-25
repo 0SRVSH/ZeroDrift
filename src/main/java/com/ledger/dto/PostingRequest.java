@@ -1,13 +1,23 @@
 package com.ledger.dto;
 
 import com.ledger.domain.PostingDirection;
+import jakarta.validation.constraints.Digits;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 
 import java.math.BigDecimal;
 import java.util.UUID;
 
 public class PostingRequest {
+    @NotNull
     private UUID accountId;
+
+    @NotNull
     private PostingDirection direction;
+
+    @NotNull
+    @Positive
+    @Digits(integer = 14, fraction = 4)
     private BigDecimal amount;
 
     public PostingRequest() {

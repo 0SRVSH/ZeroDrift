@@ -1,6 +1,6 @@
 # steps.md
 
-This document provides a step-by-step setup and execution guide for configuring Flyway database migrations in a Java 25 / Spring Boot 3 financial ledger application, ensuring immutable double-entry records, idempotency tracking, and storage-level debit-credit parity enforcement[cite: 1].
+This document provides a step-by-step setup and execution guide for configuring Flyway database migrations in a Java 25 / Spring Boot 3 financial ledger application, ensuring immutable double-entry records, idempotency tracking, and storage-level debit-credit parity enforcement.
 
 ---
 
@@ -71,7 +71,7 @@ Create `src/main/resources/db/migration/V1__init_core_ledger_schema.sql` to prov
 
 ```sql
 -- 1. Idempotency State Machine Table
--- Guarantees atomic request deduplication across retries[cite: 1]
+-- Guarantees atomic request deduplication across retries
 CREATE TABLE idempotency_records (
     idempotency_key VARCHAR(128) PRIMARY KEY,
     status VARCHAR(20) NOT NULL CHECK (status IN ('PENDING', 'COMMITTED', 'REJECTED')),
@@ -93,7 +93,7 @@ CREATE TABLE accounts (
 );
 
 -- 3. Materialized Balance Snapshots Table
--- Serves as the target for row-level locks (SELECT ... FOR UPDATE) to avoid scanning historical postings[cite: 1]
+-- Serves as the target for row-level locks (SELECT ... FOR UPDATE) to avoid scanning historical postings
 CREATE TABLE account_snapshots (
     account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE RESTRICT,
     cleared_balance NUMERIC(18, 4) NOT NULL DEFAULT 0.0000,
@@ -103,7 +103,7 @@ CREATE TABLE account_snapshots (
 );
 
 -- 4. Journal Entries Table
--- Encapsulates a distinct business transaction linking balanced posting legs[cite: 1]
+-- Encapsulates a distinct business transaction linking balanced posting legs
 CREATE TABLE journal_entries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     idempotency_key VARCHAR(128) UNIQUE NOT NULL REFERENCES idempotency_records(idempotency_key) ON DELETE RESTRICT,
@@ -113,7 +113,7 @@ CREATE TABLE journal_entries (
 );
 
 -- 5. Postings Table
--- Immutable double-entry legs; modifications and deletions are prohibited[cite: 1]
+-- Immutable double-entry legs; modifications and deletions are prohibited
 CREATE TABLE postings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     journal_entry_id UUID NOT NULL REFERENCES journal_entries(id) ON DELETE RESTRICT,
@@ -130,7 +130,7 @@ CREATE TABLE postings (
 
 ### Step 3: Create `V2__add_debit_credit_parity_trigger.sql`
 
-Create `src/main/resources/db/migration/V2__add_debit_credit_parity_trigger.sql` to enforce 100% debit-credit parity at transaction commit time[cite: 1].
+Create `src/main/resources/db/migration/V2__add_debit_credit_parity_trigger.sql` to enforce 100% debit-credit parity at transaction commit time.
 
 ```sql
 -- Evaluates net sum of debits and credits for the affected journal entry
@@ -152,7 +152,7 @@ EXECUTE FUNCTION verify_journal_entry_parity();
 Create `src/main/resources/db/migration/V3__add_performance_indexes.sql` to index lookup paths under high concurrency.
 
 ```sql
--- Accelerates historical balance lookups and account auditing[cite: 1]
+-- Accelerates historical balance lookups and account auditing
 CREATE INDEX idx_postings_account_created_at 
 ON postings (account_id, created_at DESC);
 
@@ -160,7 +160,7 @@ ON postings (account_id, created_at DESC);
 CREATE INDEX idx_postings_journal_id 
 ON postings (journal_entry_id);
 
--- Speeds up lookup for in-flight requests and background expiry routines[cite: 1]
+-- Speeds up lookup for in-flight requests and background expiry routines
 CREATE INDEX idx_idempotency_expires_at 
 ON idempotency_records (expires_at) 
 WHERE status = 'PENDING';
@@ -218,7 +218,7 @@ INSERT INTO accounts (id, account_number, currency, account_type) VALUES
 INSERT INTO journal_entries (id, idempotency_key, narration, status)
 VALUES ('c0000000-0000-0000-0000-000000000003', 'test-key-01', 'Balanced Leg Test', 'POSTED');
 
--- Balanced Postings ($150.00 DEBIT and $150.00 CREDIT)[cite: 1]
+-- Balanced Postings ($150.00 DEBIT and $150.00 CREDIT)
 INSERT INTO postings (journal_entry_id, account_id, direction, amount, sequence_order) VALUES
     ('c0000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000001', 'DEBIT', 150.0000, 0),
     ('c0000000-0000-0000-0000-000000000003', 'b0000000-0000-0000-0000-000000000002', 'CREDIT', 150.0000, 1);
